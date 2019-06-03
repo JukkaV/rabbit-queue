@@ -11,7 +11,7 @@ let replyHandlers = {};
 export async function createReplyQueue(channel: Channel) {
   await channel.assertQueue('', { exclusive: true }).then(replyTo => {
     channel.replyName = replyTo.queue;
-    channel.consume(channel.replyName, onReply, { noAck: true });
+    return channel.consume(channel.replyName, onReply, { noAck: true });
   });
 }
 
