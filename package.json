@@ -51,13 +51,13 @@
     "node": ">=10.0.0"
   },
   "dependencies": {
-    "amqplib": "^0.5.5",
-    "race-until": "^2.2.0",
-    "uuid": "^7.0.0"
+    "amqplib": "^0.7.0",
+    "race-until": "^2.3.1",
+    "uuid": "^8.3.2"
   },
   "typings": "js/index",
   "devDependencies": {
-    "@types/amqplib": "^0.5.13",
+    "@types/amqplib": "^0.5.17",
     "@types/mocha": "^7.0.1",
     "@types/node": "12.6.8",
     "@types/should": "^13.0.0",
