@@ -51,15 +51,16 @@
     "node": ">=10.0.0"
   },
   "dependencies": {
+    "@types/amqplib": "^0.5.17",
+    "@types/node": "14.14.31",
     "amqplib": "^0.7.0",
     "race-until": "2.3.1",
-    "uuid": "^8.3.2"
+    "uuid": "^8.3.2",
+    "typescript": "^3.8.2"
   },
   "typings": "js/index",
   "devDependencies": {
-    "@types/amqplib": "^0.5.17",
     "@types/mocha": "^7.0.1",
-    "@types/node": "12.6.8",
     "@types/should": "^13.0.0",
     "@types/sinon": "^7.5.1",
     "@types/source-map-support": "^0.5.1",
@@ -72,7 +73,6 @@
     "sinon": "^9.0.0",
     "source-map-support": "^0.5.16",
     "ts-node": "^8.6.2",
-    "tslint": "^6.0.0",
-    "typescript": "^3.8.2"
+    "tslint": "^6.0.0"
   }
 }
