@@ -1,15 +1,18 @@
 import * as uuid from 'uuid';
 import * as amqp from 'amqplib';
 import { Channel } from './channel';
-import { getReply } from './replyQueue';
-import raceUntil from 'race-until';
-import * as log4js from '@log4js-node/log4js-api';
+import { getReply } from './reply-queue';
+import { raceUntil } from 'race-until';
+import { Readable } from 'stream';
+import { encode } from './encode-decode';
+import getLogger from './logger';
 
-const logger = log4js.getLogger('rabbit-queue');
-
+const logger = getLogger('rabbit-queue');
 export default class Queue {
   static STOP_PROPAGATION = { stopPropagation: true };
   static ERROR_DURING_REPLY = { error: true, error_code: 999 };
+  static STOP_STREAM = 'stopStream';
+  static STOP_STREAM_MESSAGE = { stopStream: true };
 
   defaultOptions = {
     durable: true,
@@ -84,50 +87,82 @@ export default class Queue {
     if (!msg) {
       return;
     }
-    const hasReply = !!msg.properties.replyTo;
-    this.handler(msg, (error, reply) => {
-      if (hasReply && reply !== Queue.STOP_PROPAGATION) {
-        if (error) {
-          reply = Object.assign({}, Queue.ERROR_DURING_REPLY, { error_message: error });
-        }
-        var replyBuffer = Buffer.from(JSON.stringify(reply || ''));
-        this.channel.sendToQueue(
-          msg.properties.replyTo,
-          replyBuffer,
-          {
-            correlationId: msg.properties.correlationId
-          },
-          ack
-        );
-      } else {
+    this.handler(msg, async (error, reply) => {
+      const { replyTo, correlationId, headers } = msg.properties;
+      if (error && reply !== Queue.STOP_PROPAGATION) {
+        reply = Object.assign({}, Queue.ERROR_DURING_REPLY, { error_message: error });
+      }
+
+      if (!replyTo || reply === Queue.STOP_PROPAGATION) {
         ack();
+      } else if (reply instanceof Readable) {
+        const properties = {
+          correlationId,
+          contentType: 'application/json',
+          headers: { isStream: true, correlationId }
+        };
+        try {
+          let id = 0;
+          for await (let chunk of reply) {
+            properties.correlationId = `${correlationId}.${id++}`;
+            if (chunk instanceof Buffer) chunk = chunk.toString();
+            if (headers.backpressure) {
+              let serviceResponse = await Queue.getReply(
+                chunk,
+                properties,
+                this.channel,
+                replyTo,
+                null,
+                headers.timeout
+              );
+              if (serviceResponse && serviceResponse.stopStream === Queue.STOP_STREAM_MESSAGE.stopStream) {
+                ack();
+                reply.destroy();
+                logger.info(`[${correlationId}] -> Received stopStream event. Closing connection`);
+                return;
+              }
+            } else {
+              const bufferContent = encode(chunk);
+              logger.debug(`[${correlationId}] -> Publishing to queue ${replyTo} ${bufferContent.byteLength} bytes`);
+              this.channel.sendToQueue(replyTo, bufferContent, properties);
+            }
+          }
+          logger.debug(`[${correlationId}] -> Publishing to queue ${replyTo} 4 bytes (null)`);
+          this.channel.sendToQueue(replyTo, encode(null), properties, ack);
+        } catch (e) {
+          logger.error(`[${correlationId}] -> Publishing to queue ${replyTo} error ${e}`);
+          this.channel.sendToQueue(
+            replyTo,
+            encode(Object.assign({}, Queue.ERROR_DURING_REPLY, { error_message: e.message })),
+            properties,
+            ack
+          );
+        }
+      } else {
+        const bufferContent = encode(reply);
+        logger.debug(`[${correlationId}] -> Publishing to queue ${replyTo} ${bufferContent.byteLength} bytes`);
+        this.channel.sendToQueue(replyTo, bufferContent, { correlationId, contentType: 'application/json' }, ack);
       }
     });
   }
 
-  static async publish(obj, headers: amqp.Options.Publish = {}, channel: Channel, name: string, queue?: Queue) {
+  static async publish(obj, properties: amqp.Options.Publish = {}, channel: Channel, name: string, queue?: Queue) {
     if (queue) {
       await queue.created;
     }
     return new Promise((resolve, reject) => {
-      var msg = JSON.stringify(obj);
-      var correlationId = headers.correlationId || uuid.v4();
-      headers = Object.assign(
-        {
-          persistent: true,
-          correlationId
-        },
-        headers
-      );
-      const bufferContent = Buffer.from(msg);
-      logger.info(`[${correlationId}] -> Publishing to queue ${name} ${bufferContent.byteLength} bytes`);
-      channel.sendToQueue(name, bufferContent, headers, (err, ok) => (err ? reject(err) : resolve(ok)));
+      const correlationId = properties.correlationId || uuid.v4();
+
+      properties = Object.assign({ persistent: true, correlationId }, properties);
+      const bufferContent = encode(obj, properties.contentType);
+      logger.debug(`[${correlationId}] -> Publishing to queue ${name} ${bufferContent.byteLength} bytes`);
+      channel.sendToQueue(name, bufferContent, properties, (err, ok) => (err ? reject(err) : resolve(ok)));
     });
   }
 
   static async getReply(
     obj,
-    headers: amqp.Options.Publish,
+    properties: amqp.Options.Publish,
     channel: Channel,
     name: string,
     queue?: Queue,
@@ -136,12 +171,12 @@ export default class Queue {
     if (queue) {
       await queue.created;
     }
-    const reply = getReply(obj, headers, channel, (bufferContent, headers, correlationId, cb) => {
-      logger.info(`[${correlationId}] -> Publishing to reply queue ${name} ${bufferContent.byteLength} bytes`);
-      channel.sendToQueue(name, bufferContent, headers, cb);
+    const reply = getReply(obj, properties, channel, (bufferContent, properties, correlationId, cb) => {
+      logger.debug(`[${correlationId}] -> Publishing to reply queue ${name} ${bufferContent.byteLength} bytes`);
+      channel.sendToQueue(name, bufferContent, properties, cb);
     });
     if (timeout) {
-      return raceUntil(reply, timeout, false);
+      return raceUntil(reply, timeout, new Error('Timed out'));
     } else {
       return reply;
     }

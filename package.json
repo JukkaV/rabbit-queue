@@ -1,6 +1,6 @@
 {
   "name": "rabbit-queue",
-  "version": "3.0.2",
+  "version": "5.1.0",
   "description": "AMQP/RabbitMQ queue management library.",
   "main": "js/index.js",
   "keywords": [
@@ -11,47 +11,68 @@
     "amqplib"
   ],
   "scripts": {
-    "build": "tsc -p .",
-    "watch": "tsc -w -p .",
+    "build": "tsc -p ts",
+    "watch": "tsc -w -p ts",
     "prepublishOnly": "npm run build && npm run test-docker",
-    "pretest": "tslint ts/*.ts && npm run build",
-    "test": "istanbul test ./node_modules/.bin/_mocha js/test/**.js -- -R spec --timeout 10000",
-    "test-docker": "docker-compose run rabbit-queue npm run test --coverage ",
-    "posttest": "remap-istanbul -i coverage/coverage.json -o coverage/lcov-report -t html",
+    "pretest": "tslint --project ./ts/ && tslint  ./test/**/*.ts && npm run build",
+    "test": "nyc mocha",
+    "test-docker": "docker-compose run rabbit-queue npm run test",
     "prepare": "npm run build"
+  },
+  "lint-staged": {
+    "*.{ts,js}": [
+      "prettier --print-width 120 --single-quote true --write",
+      "git add"
+    ]
+  },
+  "nyc": {
+    "branches": 70,
+    "lines": 80,
+    "functions": 80,
+    "statements": 80,
+    "include": [
+      "ts/**/*.ts"
+    ],
+    "extension": [
+      ".ts"
+    ],
+    "reporter": [
+      "text-summary",
+      "html"
+    ],
+    "check-coverage": true,
+    "sourceMap": true,
+    "instrument": true
   },
   "repository": "Workable/rabbit-queue",
   "author": "Nikos Kostoulas <kostoulas@workable.com>",
   "license": "MIT",
   "engines": {
-    "node": ">=6.0.0"
+    "node": ">=10.0.0"
   },
   "dependencies": {
-    "@log4js-node/log4js-api": "^1.0.0",
-    "amqplib": "^0.5.1",
-    "race-until": "^1.0.3",
-    "uuid": "^3.0.1"
+    "amqplib": "^0.5.5",
+    "race-until": "^2.2.0",
+    "uuid": "^7.0.0"
   },
   "typings": "js/index",
-  "peerDependencies": {
-    "log4js": "*"
-  },
   "devDependencies": {
-    "@types/amqplib": "0.3.29",
-    "@types/mocha": "2.2.32",
-    "@types/node": "6.0.40",
-    "@types/node-uuid": "0.0.28",
-    "@types/should": "8.1.30",
-    "@types/sinon": "1.16.30",
-    "@types/source-map-support": "0.2.28",
-    "@types/uuid": "2.0.29",
-    "istanbul": "^0.4.5",
-    "mocha": "^5.2.0",
-    "remap-istanbul": "^0.11.1",
-    "should": "10.0.0",
-    "sinon": "1.17.5",
-    "source-map-support": "^0.4.5",
-    "tslint": "4.1.0",
-    "typescript": "2.8.3"
+    "@types/amqplib": "^0.5.13",
+    "@types/mocha": "^7.0.1",
+    "@types/node": "12.6.8",
+    "@types/should": "^13.0.0",
+    "@types/sinon": "^7.5.1",
+    "@types/source-map-support": "^0.5.1",
+    "@types/uuid": "^3.4.7",
+    "husky": "^3.0.0",
+    "lint-staged": "^9.0.2",
+    "mocha": "^7.0.1",
+    "nyc": "^15.0.0",
+    "should": "^13.2.3",
+    "sinon": "^9.0.0",
+    "source-map-support": "^0.5.16",
+    "ts-node": "^8.6.2",
+    "tslint": "^6.0.0",
+    "typescript": "^3.8.2"
   }
 }

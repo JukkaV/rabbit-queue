@@ -1,9 +1,9 @@
 import * as should from 'should';
 import * as assert from 'assert';
 import * as sinon from 'sinon';
-import Rabbit from '../rabbit';
-import BaseQueueHandler from '../baseQueueHandler';
-const sandbox = sinon.sandbox.create();
+import Rabbit from '../ts/rabbit';
+import BaseQueueHandler from '../ts/base-queue-handler';
+const sandbox = sinon.createSandbox();
 
 describe('Test baseQueueHandler', function() {
   let rabbit: Rabbit;
@@ -24,6 +24,7 @@ describe('Test baseQueueHandler', function() {
     this.name = 'test.queue';
     rabbit = new Rabbit(this.url, {});
     await rabbit.connected;
+    rabbit.on('log', () => {});
   });
 
   after(async function() {
@@ -44,6 +45,13 @@ describe('Test baseQueueHandler', function() {
     handle.calledOnce.should.be.true();
     handle.args[0][0].event.should.eql({ test: 'data' });
     handle.args[0][0].correlationId.should.equal('3');
+  });
+
+  it('should pass options to createQueue', async function() {
+    const stub = sandbox.spy(rabbit, 'createQueue');
+    const handler = new DemoHandler(this.name, rabbit, { prefetch: 10 });
+    await handler.created;
+    stub.args.should.containDeep([['test.queue', { prefetch: 10 }]]);
   });
 
   it('should mess context', async function() {
@@ -125,7 +133,6 @@ describe('Test baseQueueHandler', function() {
     try {
       await rabbit.getReply(this.name, { test: 'data' }, { correlationId: '4' });
     } catch (e) {
-      console.log(e);
       e.should.eql({ foo: 'banana' });
     }
   });

@@ -8,10 +8,10 @@
     "preserveConstEnums": true,
     "declaration": true,
     "suppressImplicitAnyIndexErrors": true,
-    "outDir": "./js",
-    "sourceMap": true
+    "outDir": "../js",
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "lib": ["es6", "esnext.asynciterable"]
   },
-  "filesGlob": [
-    "./*.ts"
-  ]
+  "filesGlob": ["./*.ts"]
 }

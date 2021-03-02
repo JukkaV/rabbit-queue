@@ -1,20 +1,24 @@
 import Rabbit from './rabbit';
 import * as amqp from 'amqplib';
+import { decode } from './encode-decode';
 import Queue from './queue';
-import * as assert from 'assert';
-import * as log4js from '@log4js-node/log4js-api';
+import getLogger from './logger';
 
 abstract class BaseQueueHandler {
   public dlqName: string;
   public retries: number;
   public retryDelay: number;
-  public logger;
+  public logger: ReturnType<typeof getLogger>;
+  public queue: Queue;
+  public dlq: Queue;
   public logEnabled: boolean;
+  public created: Promise<void>;
   public scope: 'SINGLETON' | 'PROTOTYPE';
+  public prefetch?: number;
 
   static SCOPES: { singleton: 'SINGLETON'; prototype: 'PROTOTYPE' } = {
     singleton: 'SINGLETON',
-    prototype: 'PROTOTYPE'
+    prototype: 'PROTOTYPE',
   };
 
   constructor(
@@ -25,11 +29,13 @@ abstract class BaseQueueHandler {
       retryDelay = 1000,
       logEnabled = true,
       scope = <'SINGLETON' | 'PROTOTYPE'>BaseQueueHandler.SCOPES.singleton,
-      createAndSubscribeToQueue = true
+      createAndSubscribeToQueue = true,
+      prefetch = rabbit.prefetch,
     } = {}
   ) {
-    const logger = log4js.getLogger(`rabbit-queue.${queueName}`);
+    const logger = getLogger(`rabbit-queue.${queueName}`);
 
+    this.prefetch = prefetch;
     this.retries = retries;
     this.retryDelay = retryDelay;
     this.logger = logger;
@@ -37,7 +43,7 @@ abstract class BaseQueueHandler {
     this.scope = scope;
     this.dlqName = this.getDlq();
     if (createAndSubscribeToQueue) {
-      this.createQueues();
+      this.created = this.createQueues();
     }
   }
 
@@ -63,11 +69,11 @@ abstract class BaseQueueHandler {
     return instance;
   }
 
-  createQueues() {
-    this.rabbit
-      .createQueue(this.queueName, this.getQueueOptions(), (msg, ack) => {
+  async createQueues() {
+    this.queue = await this.rabbit
+      .createQueue(this.queueName, { ...this.getQueueOptions(), prefetch: this.prefetch }, (msg, ack) => {
         if (this.scope === BaseQueueHandler.SCOPES.singleton) {
-          this.tryHandle(0, msg, ack).catch(e => this.logger.error(e));
+          this.tryHandle(0, msg, ack).catch((e) => this.logger.error(e));
         } else {
           const instance = new (<any>this.constructor)(this.queueName, this.rabbit, {
             retries: this.retries,
@@ -75,44 +81,45 @@ abstract class BaseQueueHandler {
             logger: this.logger,
             logEnabled: this.logEnabled,
             scope: this.scope,
-            createAndSubscribeToQueue: false
+            createAndSubscribeToQueue: false,
           });
-          instance.tryHandle(0, msg, ack).catch(e => this.logger.error(e));
+          instance.tryHandle(0, msg, ack).catch((e) => this.logger.error(e));
         }
       })
-      .catch(error => this.logger.error(error));
+      .catch((error) => this.logger.error(error));
 
-    this.rabbit.createQueue(this.dlqName, this.getDlqOptions()).catch(error => this.logger.error(error));
+    this.dlq = await this.rabbit
+      .createQueue(this.dlqName, this.getDlqOptions())
+      .catch((error) => this.logger.error(error));
   }
 
   async tryHandle(retries, msg: amqp.Message, ack: (error, reply) => any) {
     try {
       const startTime = this.getTime();
-      var body = msg.content.toString();
-      const event = JSON.parse(body);
+      const event = decode(msg);
       const correlationId = this.getCorrelationId(msg, event);
-      this.logger.debug('[%s] #%s Dequeueing %s ', correlationId, retries + 1, this.queueName);
+      this.logger.debug(`[${correlationId}] #${retries + 1} Dequeueing ${this.queueName} `);
 
       const result = await this.handle({ msg, event, correlationId, startTime });
 
-      this.logger.debug('[%s] #%s Acknowledging %s ', correlationId, retries + 1, this.queueName);
+      this.logger.debug(`[${correlationId}] #${retries + 1} Acknowledging ${this.queueName} `);
       ack(null, result);
       if (this.logEnabled) {
         this.logTime(startTime, correlationId);
       }
     } catch (err) {
       this.handleError(err, msg);
-      this.retry(retries, msg, ack).catch(error => this.logger.error(error));
+      this.retry(retries, msg, ack).catch((error) => this.logger.error(error));
     }
   }
 
   handleError(err, msg) {
     this.logger.error(err);
     msg.properties.headers.errors = {
-      name: err.name,
-      message: err.message,
+      name: err.name && err.name.substr(0, 200),
+      message: err.message && err.message.substr(0, 200),
       stack: err.stack && err.stack.substr(0, 200),
-      time: new Date().toString()
+      time: new Date().toString(),
     };
   }
 
@@ -149,9 +156,8 @@ abstract class BaseQueueHandler {
   async addToDLQ(retries, msg: amqp.Message, ack) {
     try {
       const correlationId = this.getCorrelationId(msg);
-      const body = msg.content.toString();
-      const event = JSON.parse(body);
-      this.logger.warn('[%s] Adding to dlq: %s after %s retries', correlationId, this.dlqName, retries);
+      const event = decode(msg);
+      this.logger.warn(`[${correlationId}] Adding to dlq: ${this.dlqName} after ${retries} retries`);
       await this.rabbit.publish(this.dlqName, event, msg.properties);
       const response = await this.afterDlq({ msg, event });
       ack(msg.properties.headers.errors.message, response);
